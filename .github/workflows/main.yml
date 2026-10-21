@@ -1,0 +1,73 @@
+name: Build Party Bus
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Download Dalamud (for references)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+      - name: Use the newest Dalamud SDK
+        shell: pwsh
+        run: |
+          $v = (Invoke-RestMethod https://api.nuget.org/v3-flatcontainer/dalamud.net.sdk/index.json).versions | Where-Object { $_ -notmatch '-' } | Select-Object -Last 1
+          Write-Host "Using Dalamud.NET.Sdk $v"
+          (Get-Content PartyBus/PartyBus.csproj) -replace 'Dalamud\.NET\.Sdk/[0-9.]+', "Dalamud.NET.Sdk/$v" | Set-Content PartyBus/PartyBus.csproj
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build PartyBus/PartyBus.csproj -c Release -p:Version=1.0.${{ github.run_number }}.0
+          if ($LASTEXITCODE -ne 0) { throw "Party Bus failed to build" }
+
+      - name: Make the install listing (pluginmaster.json)
+        shell: pwsh
+        run: |
+          $base = "https://github.com/${{ github.repository }}/releases/latest/download"
+          $zip = Get-ChildItem -Recurse -Filter latest.zip PartyBus/bin | Select-Object -First 1
+          if (-not $zip) { throw "latest.zip was not found" }
+          Copy-Item $zip.FullName PartyBus.zip -Force
+          $manifest = Get-ChildItem -Recurse -Filter PartyBus.json PartyBus/bin | Where-Object { (Get-Content $_.FullName -Raw) -match 'AssemblyVersion' } | Select-Object -First 1
+          $m = Get-Content $manifest.FullName -Raw | ConvertFrom-Json
+          $extra = @{
+            DownloadLinkInstall = "$base/PartyBus.zip"
+            DownloadLinkUpdate  = "$base/PartyBus.zip"
+            DownloadLinkTesting = "$base/PartyBus.zip"
+            RepoUrl             = "https://github.com/${{ github.repository }}"
+            LastUpdate          = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          }
+          foreach ($k in $extra.Keys) { $m | Add-Member -NotePropertyName $k -NotePropertyValue $extra[$k] -Force }
+          ConvertTo-Json -InputObject @($m) -Depth 5 | Set-Content pluginmaster.json -Encoding utf8
+          Get-Content pluginmaster.json
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.0.${{ github.run_number }}" PartyBus.zip pluginmaster.json --title "Party Bus 1.0.${{ github.run_number }}" --notes "Automatic build" --latest
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: PartyBus
+          path: PartyBus/bin/
