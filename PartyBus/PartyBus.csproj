@@ -1,0 +1,9 @@
+<Project Sdk="Dalamud.NET.Sdk/13.0.0">
+  <PropertyGroup>
+    <Version>1.0.0.0</Version>
+    <Description>Party Bus: your crew's venue list, synced through party chat, with Party Finder open alerts.</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

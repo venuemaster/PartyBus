@@ -1,0 +1,8 @@
+{
+  "Author": "Party Bus",
+  "Name": "Party Bus",
+  "Punchline": "Your crew's venue list: ratings, addresses, open alerts.",
+  "Description": "Keep a list of the venues you and your friends visit: name, data center, world, district, ward and plot, filled in automatically from where you're standing. Mark each one green (liked) or red (didn't). The list syncs with your crew through party chat. Party Bus reads Party Finder listings and tells you (and pings your party) when one of your liked venues is open. Open with /partybus or /pbus.",
+  "Tags": [ "venue", "venues", "party finder", "friends", "social", "housing" ],
+  "RepoUrl": ""
+}
