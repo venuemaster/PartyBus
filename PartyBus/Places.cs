@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
@@ -111,6 +112,27 @@ public static class Places
     {
         try { return Plugin.PartyList.Length > 1 || InfoProxyCrossRealm.IsCrossRealmParty(); }
         catch { return Plugin.PartyList.Length > 1; }
+    }
+
+    /// <summary>Names of everyone in your party, including cross-world parties.</summary>
+    public static unsafe List<string> PartyNames()
+    {
+        var names = new List<string>();
+        try
+        {
+            if (InfoProxyCrossRealm.IsCrossRealmParty())
+            {
+                var n = InfoProxyCrossRealm.GetPartyMemberCount();
+                for (var i = 0u; i < n; i++)
+                {
+                    var m = InfoProxyCrossRealm.GetGroupMember(i);
+                    if (m != null && m->NameString.Length > 0) names.Add(m->NameString);
+                }
+            }
+        }
+        catch { }
+        foreach (var m in Plugin.PartyList) { var n = m.Name.TextValue; if (n.Length > 0 && !names.Contains(n)) names.Add(n); }
+        return names;
     }
 
     public static string Norm(string s)

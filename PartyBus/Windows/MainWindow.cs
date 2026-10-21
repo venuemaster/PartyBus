@@ -383,8 +383,8 @@ public class MainWindow : Window
 
         var auto = Config.AutoSync;
         if (ImGui.Checkbox("Sync automatically when I join a party or a crewmate joins mine", ref auto)) { Config.AutoSync = auto; Save(); }
-        if (ImGui.Button("Sync with my party now")) Bus.SendHello();
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Asks everyone in the party for anything you're missing, and sends them anything they're missing.");
+        if (ImGui.Button("Sync with my party now")) Bus.SyncNow();
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Sends your venues to the party and asks everyone for theirs.\nYour crewmates need YOU on their crew list too, or their Party Bus ignores it.");
         ImGui.SameLine();
         if (ImGui.Button("Send my whole list")) Bus.SendEverything();
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("For a new crewmate. Takes a few lines of party chat, sent a few seconds apart.");
@@ -400,8 +400,21 @@ public class MainWindow : Window
         if ((ImGui.Button("Add") || enter) && newCrew.Trim().Length > 0) { AddCrew(newCrew.Trim()); newCrew = string.Empty; }
         ImGui.SameLine();
         if (ImGui.Button("Add everyone in my party"))
-            foreach (var m in Plugin.PartyList) AddCrew(m.Name.TextValue);
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Works for parties on your own world. For cross-world parties, type the names.");
+            foreach (var n in Places.PartyNames()) AddCrew(n);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Works for normal and cross-world parties.");
+
+        var waiting = Bus.Ignored.Keys.Where(k => !Config.Crew.Any(c => c.Equals(k, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (waiting.Count > 0)
+        {
+            ImGui.TextColored(Gold, "These people tried to sync with you but aren't on your crew:");
+            foreach (var w in waiting)
+            {
+                ImGui.PushID("ign" + w);
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Add {w}")) { AddCrew(w); Bus.Ignored.Remove(w); }
+                ImGui.PopID();
+            }
+        }
 
         string? remove = null;
         foreach (var c in Config.Crew)
@@ -413,6 +426,9 @@ public class MainWindow : Window
             ImGui.PopID();
         }
         if (remove != null) { Config.Crew.Remove(remove); Save(); }
+
+        if (Bus.SyncLog.Count > 0 && ImGui.CollapsingHeader($"Sync log ({Bus.SyncLog.Count})"))
+            foreach (var l in Bus.SyncLog) ImGui.TextColored(Grey, l);
 
         ImGui.Separator();
         ImGui.TextColored(Pink, "Share without a party");

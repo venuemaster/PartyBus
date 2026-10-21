@@ -45,6 +45,19 @@ public class Bus
     public readonly List<PfSighting> Sightings = new();
     public string SyncStatus { get; private set; } = string.Empty;
     private readonly Dictionary<string, DateTime> lastHelloFrom = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> pendingSince = new(StringComparer.OrdinalIgnoreCase);   // sent to them, waiting for their "got it"
+    private readonly Dictionary<string, DateTime> ackDue = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>People with Party Bus who tried to sync with you but aren't on your crew list.</summary>
+    public readonly Dictionary<string, DateTime> Ignored = new(StringComparer.OrdinalIgnoreCase);
+    public readonly List<string> SyncLog = new();
+
+    private void LogSync(string text)
+    {
+        SyncLog.Insert(0, $"{DateTime.Now:h:mm tt}  {text}");
+        if (SyncLog.Count > 60) SyncLog.RemoveAt(SyncLog.Count - 1);
+        SyncStatus = text;
+    }
     private DateTime lastHelloSent = DateTime.MinValue;
     private DateTime helloDue = DateTime.MinValue;
 
@@ -150,13 +163,11 @@ public class Bus
         var recs = new List<string>();
         foreach (var v in Config.Venues.Where(v => Math.Max(v.Updated, v.ReceivedAt) > since))
             recs.AddRange(RecordsFor(v, includeRatings: true));
-        Config.LastSyncedWith[person] = Places.Now;
-        plugin.Save();
-        if (recs.Count > 0)
-        {
-            SyncStatus = $"Sent {recs.Count(r => r[0] == 'V')} venue(s) to {person} at {DateTime.Now:h:mm tt}";
-            SendRecords(recs);
-        }
+        if (recs.Count == 0) return;
+        // Only marked as synced once they reply "got it" (so a missed sync is retried next time).
+        pendingSince[person] = Places.Now;
+        LogSync($"Sent {recs.Count(r => r[0] == 'V')} venue(s) to {person}");
+        SendRecords(recs);
     }
 
     public void SendHello()
@@ -164,7 +175,20 @@ public class Bus
         if (!Places.InParty()) { SyncStatus = "You're not in a party."; return; }
         lastHelloSent = DateTime.Now;
         plugin.SendLine($"/p {Prefix}H|{Active.Count()}");
-        SyncStatus = $"Asked the party for updates at {DateTime.Now:h:mm tt}";
+        LogSync("Asked the party for updates");
+    }
+
+    /// <summary>The "Sync now" button: ask for their changes AND send mine (everything they might not have).</summary>
+    public void SyncNow()
+    {
+        if (!Places.InParty()) { LogSync("You're not in a party."); return; }
+        SendHello();
+        var since = Config.Crew.Count == 0 ? 0 : Config.Crew.Select(c => Config.LastSyncedWith.TryGetValue(c, out var t) ? t : 0).Min();
+        var recs = Config.Venues.Where(v => Math.Max(v.Updated, v.ReceivedAt) > since).SelectMany(v => RecordsFor(v, true)).ToList();
+        if (recs.Count == 0) return;
+        foreach (var c in Config.Crew) pendingSince[c] = Places.Now;
+        LogSync($"Sent {recs.Count(r => r[0] == 'V')} venue(s) to the party");
+        SendRecords(recs);
     }
 
     /// <summary>Sends your entire list to the party (for a friend who's brand new or out of date).</summary>
@@ -172,14 +196,21 @@ public class Bus
     {
         if (!Places.InParty()) { SyncStatus = "You're not in a party."; return; }
         var recs = Config.Venues.SelectMany(v => RecordsFor(v, true)).ToList();
+        foreach (var c in Config.Crew) pendingSince[c] = Places.Now;
         SendRecords(recs);
-        SyncStatus = $"Sending all {Active.Count()} venues to the party...";
+        LogSync($"Sending all {Active.Count()} venues to the party...");
     }
 
     public void ScheduleHello(int seconds) => helloDue = DateTime.Now.AddSeconds(seconds);
 
     public void Update()
     {
+        foreach (var (person, due) in ackDue.ToList())
+        {
+            if (DateTime.Now < due) continue;
+            ackDue.Remove(person);
+            plugin.SendLine($"/p {Prefix}A|{Clean(person)}");
+        }
         if (helloDue != DateTime.MinValue && DateTime.Now >= helloDue)
         {
             helloDue = DateTime.MinValue;
@@ -212,7 +243,12 @@ public class Bus
         }
         if (!text.StartsWith(Prefix, StringComparison.Ordinal)) return false;
         if (self) return true;
-        if (!Allowed(from)) return true;
+        if (!Allowed(from))
+        {
+            if (!Ignored.ContainsKey(from)) LogSync($"Ignored sync from {from} - not on your crew list");
+            Ignored[from] = DateTime.Now;
+            return true;
+        }
 
         try
         {
@@ -229,7 +265,19 @@ public class Bus
             {
                 var n = 0;
                 foreach (var rec in body[2..].Split('~')) n += Apply(rec.Split('^')) ? 1 : 0;
-                if (n > 0) { plugin.Save(); SyncStatus = $"Got {n} update(s) from {from} at {DateTime.Now:h:mm tt}"; }
+                if (n > 0) { plugin.Save(); LogSync($"Got {n} update(s) from {from}"); }
+                ackDue[from] = DateTime.Now.AddSeconds(4);   // one "got it" per burst of lines
+            }
+            else if (body.StartsWith("A|"))
+            {
+                // "got it" - only counts if it's addressed to me
+                if (body[2..].Trim().Equals(Clean(MyName), StringComparison.OrdinalIgnoreCase) && pendingSince.TryGetValue(from, out var sentAt))
+                {
+                    Config.LastSyncedWith[from] = sentAt;
+                    pendingSince.Remove(from);
+                    plugin.Save();
+                    LogSync($"{from} got your venues");
+                }
             }
         }
         catch (Exception ex) { Plugin.Log.Warning(ex, "Bad Party Bus line from {0}", from); }
